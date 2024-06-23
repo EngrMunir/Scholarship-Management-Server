@@ -1,6 +1,7 @@
 const express = require('express');
 const app = express();
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config()
 const stripe= require('stripe')(process.env.STRIPE_SECRET_KEY)
@@ -11,8 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.niwwhqe.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.yk1xelo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
@@ -33,6 +33,30 @@ async function run() {
     const paymentCollection = client.db('ScholarDb').collection('payments');
     const reviewCollection = client.db('ScholarDb').collection('review');
 
+    // jwt related api
+    app.post('/jwt', async(req, res) =>{
+      const user=req.body;
+      const token =jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {expiresIn:'1h'});
+      res.send({ token });
+    })
+
+    // middleware
+    const verifyToken = (req, res, next)=>{
+      console.log('inside verify token',req.headers.authorization);
+      if(!req.headers.authorization){
+        return res.status(401).send({message:'forbidden access'})
+      }
+      const token =req.headers.authorization.split(' ')[1];
+      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET,(err, decoded)=>{
+        if(err){
+          return res.status(401).send({message:'forbidden access'})
+        }
+        req.decoded = decoded;
+        next();
+      })
+      
+    }
+
     // scholarship related api
     app.get('/scholarships', async(req, res)=>{
         // console.log('pagination query',req.query)
@@ -44,12 +68,6 @@ async function run() {
         .limit(size)
         .toArray();
         res.send(result);
-      // }
-      // else{
-      //   const result = await scholarshipCollection.find().toArray();
-      //   res.send(result);
-      // }
-        
     })
     app.get('/scholarship/:id', async(req, res)=>{
       const id= req.params.id;
@@ -206,10 +224,27 @@ async function run() {
 
 
     // users related api
-    app.get('/users', async(req, res)=>{
+    app.get('/users',verifyToken,async(req, res)=>{
       const result = await userCollection.find().toArray();
       res.send(result);
     })
+
+    app.get('/user/admin/:email',verifyToken, async(req, res)=>{
+      const email = req.params.email;
+      if(email !== req.decoded.email){
+        return res.status(403).send({message: 'unauthorized access'})
+      }
+
+      const query = {email: email }
+      const user =await userCollection.findOne(query)
+      let admin=false;
+      if(user){
+        admin = user?.role === 'admin';
+      }
+      res.send({ admin })
+    })
+
+
     app.get('/users/:email', async(req, res)=>{
       const email=  req.params.email;
       console.log('email rcv',email)
@@ -334,7 +369,7 @@ async function run() {
 
 
     // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
+    await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
